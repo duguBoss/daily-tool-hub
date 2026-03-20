@@ -692,21 +692,6 @@ def ensure_wxhtml(
             "</section>"
         )
 
-    overview = (
-        f"<section style='margin:0 0 14px 0;padding:12px 2px;border-radius:10px;background:{theme['card']};color:#e5e7eb;'>"
-        "<div style='display:flex;flex-wrap:wrap;gap:8px;'>"
-        f"<span style='padding:4px 8px;border-radius:999px;background:{theme['accent']};color:#0b1220;font-size:12px;'>"
-        f"{escape(post.name)}</span>"
-        f"<span style='padding:4px 8px;border-radius:999px;background:#334155;font-size:12px;'>▲ {post.votes} votes</span>"
-        f"<span style='padding:4px 8px;border-radius:999px;background:#334155;font-size:12px;'>💬 {post.comments} comments</span>"
-        "</div>"
-        f"<p style='margin:10px 0 0 0;font-size:18px;line-height:1.55;font-weight:700;color:#f8fafc;'>"
-        f"别只看热度，{escape(post.name)}值不值得用？</p>"
-        f"<p style='margin:8px 0 0 0;font-size:14px;line-height:1.8;color:#e2e8f0;'>{escape(post.tagline or post.description or '')}</p>"
-        "</section>"
-    )
-    body = overview + body
-
     missing_images = [u for u in github_images if u not in body]
     for u in missing_images:
         body += (
@@ -742,7 +727,7 @@ def ensure_wxhtml(
         "<section style='margin:0 0 14px;'>"
         f"<img src='{HEADER_IMG}' style='width:100%;height:auto;display:block;border-radius:12px;'/>"
         "</section>"
-        f"<section style='padding:14px 2px;border-radius:12px;background:{theme['bg']};"
+        f"<section style='padding:14px 4px;border-radius:12px;background:{theme['bg']};"
         "border:1px solid #1f2937;margin-bottom:14px;'>"
         f"<p style='margin:0 0 6px;font-size:13px;color:{theme['accent']};'>{escape(theme['name'])}</p>"
         f"<h2 style='margin:0 0 10px;font-size:22px;line-height:1.4;'>{escape(title)}</h2>"
