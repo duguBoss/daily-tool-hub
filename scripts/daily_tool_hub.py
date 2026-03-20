@@ -29,6 +29,8 @@ HEADER_IMG = (
 PH_ENDPOINT = "https://api.producthunt.com/v2/api/graphql"
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3-flash-preview")
 GEMINI_MAX_RETRIES = int(os.getenv("GEMINI_MAX_RETRIES", "5"))
+MAX_PRODUCTIVITY_CHECKS = int(os.getenv("MAX_PRODUCTIVITY_CHECKS", "50"))
+PH_FETCH_FIRST = int(os.getenv("PH_FETCH_FIRST", "50"))
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
@@ -478,16 +480,115 @@ def make_click_title(text: str, post: ToolPost) -> str:
     return raw[:30]
 
 
+def gemini_generate_json(
+    session: requests.Session,
+    api_key: str,
+    prompt: str,
+    *,
+    temperature: float = 0.7,
+    retries: int | None = None,
+) -> dict[str, Any]:
+    endpoint = (
+        f"https://generativelanguage.googleapis.com/v1beta/models/"
+        f"{GEMINI_MODEL}:generateContent?key={api_key}"
+    )
+    payload = {
+        "contents": [{"role": "user", "parts": [{"text": prompt.strip()}]}],
+        "generationConfig": {
+            "temperature": temperature,
+            "responseMimeType": "application/json",
+        },
+    }
+
+    max_retries = max(1, retries if retries is not None else GEMINI_MAX_RETRIES)
+    data: dict[str, Any] | None = None
+    for attempt in range(1, max_retries + 1):
+        resp = session.post(
+            endpoint,
+            headers={"Content-Type": "application/json"},
+            json=payload,
+            timeout=120,
+        )
+        if resp.status_code < 400:
+            data = resp.json()
+            break
+        should_retry = resp.status_code == 429 or 500 <= resp.status_code <= 599
+        if not should_retry or attempt == max_retries:
+            resp.raise_for_status()
+        retry_after = resp.headers.get("Retry-After", "").strip()
+        delay = min(60, int(retry_after)) if retry_after.isdigit() else min(60, 2 ** attempt)
+        log(f"warn: Gemini status={resp.status_code}, retry in {delay}s ({attempt}/{max_retries})")
+        time.sleep(delay)
+
+    if data is None:
+        raise RuntimeError("Gemini request failed after retries.")
+
+    parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+    text = "".join(p.get("text", "") for p in parts).strip()
+    if not text:
+        raise RuntimeError("Gemini returned empty content.")
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", text, flags=re.S)
+        if not match:
+            raise RuntimeError("Gemini response is not valid JSON.")
+        return json.loads(match.group(0))
+
+
+def is_productivity_related_by_ai(
+    session: requests.Session,
+    api_key: str,
+    post: ToolPost,
+) -> tuple[bool, str]:
+    prompt = f"""
+You are a strict Product Hunt classifier.
+Decide whether this launch is primarily a productivity/work-efficiency tool.
+
+Output JSON only:
+{{
+  "related": true or false,
+  "reason": "short Chinese reason within 20 chars"
+}}
+
+Judging standard:
+- related=true only when the core value is improving work/study/creation efficiency
+  (e.g. writing, coding, automation, task/project management, notes, scheduling, knowledge workflow).
+- related=false for games, entertainment, pure social, shopping, finance/crypto speculation,
+  media consumption, wallpapers/avatars, and tools not focused on productivity.
+
+Name: {post.name}
+Tagline: {post.tagline}
+Description: {post.description}
+Topics: {json.dumps(post.topics, ensure_ascii=False)}
+Product Hunt URL: {post.ph_url}
+Website: {post.website or ""}
+""".strip()
+    result = gemini_generate_json(
+        session,
+        api_key,
+        prompt,
+        temperature=0.1,
+        retries=min(3, GEMINI_MAX_RETRIES),
+    )
+
+    related_raw = result.get("related")
+    if isinstance(related_raw, bool):
+        related = related_raw
+    elif isinstance(related_raw, (int, float)):
+        related = bool(related_raw)
+    else:
+        related = str(related_raw or "").strip().lower() in {"true", "1", "yes", "related"}
+    reason = str(result.get("reason", "")).strip()[:40]
+    return related, reason
+
+
 def call_gemini(
     session: requests.Session,
     api_key: str,
     post: ToolPost,
     image_urls: list[str],
 ) -> dict[str, Any]:
-    endpoint = (
-        f"https://generativelanguage.googleapis.com/v1beta/models/"
-        f"{GEMINI_MODEL}:generateContent?key={api_key}"
-    )
     prompt = f"""
 You are a product analyst and Chinese tech editor.
 Turn today's Product Hunt launch into a practical WeChat article.
@@ -511,7 +612,8 @@ Requirements:
    - include explicit benefit statements and scenario-based copy;
    - style should be eye-catching but not fake/exaggerated.
 9) Avoid repetitive or generic AI-style wording.
-10) Do not output anything outside JSON.
+10) Keep left/right spacing very small in your inline styles (1-2px), because WeChat already applies page padding.
+11) Do not output anything outside JSON.
 
 Tool name: {post.name}
 Tagline: {post.tagline}
@@ -523,45 +625,7 @@ Product Hunt URL: {post.ph_url}
 Official Website: {post.website or ''}
 Available image URLs: {json.dumps(image_urls, ensure_ascii=False)}
 """.strip()
-
-    payload = {
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": 0.75, "responseMimeType": "application/json"},
-    }
-
-    data: dict[str, Any] | None = None
-    for attempt in range(1, GEMINI_MAX_RETRIES + 1):
-        resp = session.post(
-            endpoint,
-            headers={"Content-Type": "application/json"},
-            json=payload,
-            timeout=120,
-        )
-        if resp.status_code < 400:
-            data = resp.json()
-            break
-        should_retry = resp.status_code == 429 or 500 <= resp.status_code <= 599
-        if not should_retry or attempt == GEMINI_MAX_RETRIES:
-            resp.raise_for_status()
-        retry_after = resp.headers.get("Retry-After", "").strip()
-        delay = min(60, int(retry_after)) if retry_after.isdigit() else min(60, 2 ** attempt)
-        log(f"warn: Gemini status={resp.status_code}, retry in {delay}s ({attempt}/{GEMINI_MAX_RETRIES})")
-        time.sleep(delay)
-
-    if data is None:
-        raise RuntimeError("Gemini request failed after retries.")
-
-    parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
-    text = "".join(p.get("text", "") for p in parts).strip()
-    if not text:
-        raise RuntimeError("Gemini returned empty content.")
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        match = re.search(r"\{.*\}", text, flags=re.S)
-        if not match:
-            raise RuntimeError("Gemini response is not valid JSON.")
-        return json.loads(match.group(0))
+    return gemini_generate_json(session, api_key, prompt, temperature=0.75)
 
 
 def ensure_wxhtml(
@@ -587,7 +651,7 @@ def ensure_wxhtml(
     # If model output has no image at all, inject one near the top.
     if "<img" not in body.lower() and github_images:
         body = (
-            "<figure style='margin:0 0 14px 0;padding:6px;border-radius:10px;border:1px solid #e5e7eb;'>"
+            "<figure style='margin:0 0 14px 0;padding:6px 2px;border-radius:10px;border:1px solid #e5e7eb;'>"
             f"<img src='{escape(github_images[0])}' style='width:100%;height:auto;border-radius:8px;'/>"
             "</figure>"
             + body
@@ -605,7 +669,7 @@ def ensure_wxhtml(
         )
 
     overview = (
-        f"<section style='margin:0 0 14px 0;padding:12px;border-radius:10px;background:{theme['card']};color:#e5e7eb;'>"
+        f"<section style='margin:0 0 14px 0;padding:12px 2px;border-radius:10px;background:{theme['card']};color:#e5e7eb;'>"
         "<div style='display:flex;flex-wrap:wrap;gap:8px;'>"
         f"<span style='padding:4px 8px;border-radius:999px;background:{theme['accent']};color:#0b1220;font-size:12px;'>"
         f"{escape(post.name)}</span>"
@@ -622,7 +686,7 @@ def ensure_wxhtml(
     missing_images = [u for u in github_images if u not in body]
     for u in missing_images:
         body += (
-            f"<figure style='margin:16px 0;padding:8px;border:1px solid {theme['accent']};"
+            f"<figure style='margin:16px 0;padding:8px 2px;border:1px solid {theme['accent']};"
             "border-radius:10px;'>"
             f"<img src='{escape(u)}' style='width:100%;height:auto;border-radius:6px;'/>"
             "</figure>"
@@ -631,7 +695,7 @@ def ensure_wxhtml(
     tags = build_tags(post)
     tags_text = " ".join(tags)
     website_block = (
-        f"<section style='margin-top:10px;padding:10px;border:1px dashed #cbd5e1;border-radius:10px;'>"
+        f"<section style='margin-top:10px;padding:10px 2px;border:1px dashed #cbd5e1;border-radius:10px;'>"
         f"<p style='margin:0;font-size:14px;'>工具官网：<a href='{escape(post.website)}'>{escape(post.website)}</a></p>"
         "</section>"
         if post.website
@@ -639,7 +703,7 @@ def ensure_wxhtml(
     )
 
     body += (
-        f"<section style='margin-top:16px;padding:12px;border:1px solid {theme['accent']};"
+        f"<section style='margin-top:16px;padding:12px 2px;border:1px solid {theme['accent']};"
         "border-radius:10px;background:#f8fafc;'>"
         "<h3 style='margin:0 0 8px;font-size:18px;'>快速结论</h3>"
         f"<p style='margin:0;'>{escape(summary)}</p>"
@@ -649,11 +713,11 @@ def ensure_wxhtml(
     )
 
     return (
-        f"<section style='font-size:16px;line-height:1.78;color:{theme['fg']};'>"
+        f"<section style='font-size:16px;line-height:1.78;color:{theme['fg']};padding:0 2px;'>"
         "<section style='margin:0 0 14px;'>"
         f"<img src='{HEADER_IMG}' style='width:100%;height:auto;display:block;border-radius:12px;'/>"
         "</section>"
-        f"<section style='padding:14px;border-radius:12px;background:{theme['bg']};"
+        f"<section style='padding:14px 2px;border-radius:12px;background:{theme['bg']};"
         "border:1px solid #1f2937;margin-bottom:14px;'>"
         f"<p style='margin:0 0 6px;font-size:13px;color:{theme['accent']};'>{escape(theme['name'])}</p>"
         f"<h2 style='margin:0 0 10px;font-size:22px;line-height:1.4;'>{escape(title)}</h2>"
@@ -664,7 +728,7 @@ def ensure_wxhtml(
         f"💬 {post.comments} comments</span>"
         "</div>"
         "</section>"
-        "<section style='padding:14px;border-radius:12px;background:#ffffff;color:#111827;border:1px solid #e5e7eb;'>"
+        "<section style='padding:14px 2px;border-radius:12px;background:#ffffff;color:#111827;border:1px solid #e5e7eb;'>"
         f"{body}"
         "</section>"
         "</section>"
@@ -717,7 +781,7 @@ def main() -> int:
     log(f"loaded seen state: ids={len(seen_ids)} fingerprints={len(seen_fingerprints)}")
 
     session = requests.Session()
-    posts = fetch_posts(session, token=ph_token, first=30)
+    posts = fetch_posts(session, token=ph_token, first=max(20, PH_FETCH_FIRST))
     log(f"fetched posts: {len(posts)}")
 
     unseen_posts = [
@@ -729,18 +793,28 @@ def main() -> int:
     if not unseen_posts:
         raise RuntimeError("No unseen Product Hunt post in fetched results.")
     selected: ToolPost | None = None
-    fallback_selected: ToolPost | None = None
-    for candidate in unseen_posts[:10]:
-        enriched = enrich_post(session, candidate)
-        if fallback_selected is None:
-            fallback_selected = enriched
-        if enriched.image_urls:
-            selected = enriched
+    checked = 0
+    max_checks = (
+        len(unseen_posts)
+        if MAX_PRODUCTIVITY_CHECKS <= 0
+        else min(MAX_PRODUCTIVITY_CHECKS, len(unseen_posts))
+    )
+    for candidate in unseen_posts:
+        if checked >= max_checks:
             break
+        enriched = enrich_post(session, candidate)
+        checked += 1
+        related, reason = is_productivity_related_by_ai(session, gemini_api_key, enriched)
+        log(
+            f"productivity-check {checked}/{max_checks}: "
+            f"{enriched.name} ({enriched.id}) -> {related} {reason}"
+        )
+        if not related:
+            continue
+        selected = enriched
+        break
     if selected is None:
-        selected = fallback_selected
-    if selected is None:
-        raise RuntimeError("No valid Product Hunt post after enrichment.")
+        raise RuntimeError("No productivity-related unseen tool found in fetched results.")
     selected_fp = tool_fingerprint(selected)
     log(f"selected: {selected.name} ({selected.id}) fp={selected_fp}")
     log(f"source images found: {len(selected.image_urls)}")
