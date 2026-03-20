@@ -575,6 +575,31 @@ def ensure_wxhtml(
     )
 
 
+def create_fallback_cover(post: ToolPost, theme_key: str) -> str:
+    theme = THEMES.get(theme_key, THEMES["builder"])
+    title = escape((post.name or "Product Hunt Tool")[:48])
+    subtitle_raw = post.tagline or post.description or "Today on Product Hunt"
+    subtitle = escape(subtitle_raw[:92])
+    svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+<defs>
+  <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0%" stop-color="{theme['bg']}"/>
+    <stop offset="100%" stop-color="{theme['card']}"/>
+  </linearGradient>
+</defs>
+<rect width="1280" height="720" fill="url(#bg)"/>
+<rect x="52" y="52" width="1176" height="616" rx="24" fill="#ffffff" opacity="0.06"/>
+<text x="96" y="150" fill="{theme['accent']}" font-size="32" font-family="Arial, sans-serif">DAILY TOOL RADAR</text>
+<text x="96" y="250" fill="#ffffff" font-size="64" font-weight="700" font-family="Arial, sans-serif">{title}</text>
+<text x="96" y="332" fill="#d1d5db" font-size="34" font-family="Arial, sans-serif">{subtitle}</text>
+<text x="96" y="622" fill="#93c5fd" font-size="28" font-family="Arial, sans-serif">producthunt.com</text>
+</svg>
+"""
+    file = ASSETS_DIR / "cover_fallback.svg"
+    file.write_text(svg, encoding="utf-8")
+    return to_github_raw_url(file.relative_to(ROOT))
+
+
 def main() -> int:
     ph_token = os.getenv("PRODUCT_HUNT_TOKEN", "").strip()
     if not ph_token:
@@ -597,10 +622,13 @@ def main() -> int:
     selected = enrich_post(session, selected)
     log(f"selected: {selected.name} ({selected.id})")
     log(f"source images found: {len(selected.image_urls)}")
+    theme_key = choose_theme(selected)
 
     github_images = download_images(session, selected.image_urls, limit=12)
     if not github_images:
-        raise RuntimeError("No images available for selected tool.")
+        fallback_cover = create_fallback_cover(selected, theme_key=theme_key)
+        github_images = [fallback_cover]
+        log("warn: no remote images found, generated fallback SVG cover.")
     log(f"images downloaded: {len(github_images)}")
 
     gemini = call_gemini(session, api_key=gemini_api_key, post=selected, image_urls=github_images)
@@ -610,7 +638,6 @@ def main() -> int:
     )
     wxhtml_raw = str(gemini.get("wxhtml", "")).strip()
 
-    theme_key = choose_theme(selected)
     wxhtml = ensure_wxhtml(
         wxhtml=wxhtml_raw,
         title=title,
