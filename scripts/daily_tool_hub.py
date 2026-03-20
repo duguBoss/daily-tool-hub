@@ -173,17 +173,25 @@ def parse_node_images(node: dict[str, Any]) -> list[str]:
             u = normalize_url(thumbnail.get(key))
             if u:
                 urls.append(u)
+
+    def append_media_item(media_item: dict[str, Any]) -> None:
+        if not isinstance(media_item, dict):
+            return
+        m_type = str(media_item.get("type", "")).lower()
+        if m_type and "image" not in m_type and "screenshot" not in m_type:
+            return
+        for k in ("url", "imageUrl"):
+            u = normalize_url(media_item.get(k))
+            if u:
+                urls.append(u)
+
     media = node.get("media")
     if isinstance(media, list):
         for m in media:
-            if not isinstance(m, dict):
-                continue
-            m_type = str(m.get("type", "")).lower()
-            if m_type and "image" not in m_type and "screenshot" not in m_type:
-                continue
-            u = normalize_url(m.get("url"))
-            if u:
-                urls.append(u)
+            append_media_item(m)
+    elif isinstance(media, dict):
+        for edge in media.get("edges", []) or []:
+            append_media_item((edge or {}).get("node", {}) or {})
     return list(dict.fromkeys(urls))
 
 
@@ -242,9 +250,19 @@ def fetch_posts(session: requests.Session, token: str, first: int = 30) -> list[
                 commentsCount
                 postedAt
                 thumbnailUrl
+                thumbnail { url }
                 topic { name }
                 topics(first: 5) { edges { node { name } } }
-                media { type url }
+                media(first: 8) {
+                  edges {
+                    node {
+                      type
+                      url
+                      imageUrl
+                      videoUrl
+                    }
+                  }
+                }
               }
             }
           }
@@ -616,10 +634,22 @@ def main() -> int:
     posts = fetch_posts(session, token=ph_token, first=30)
     log(f"fetched posts: {len(posts)}")
 
-    selected = next((p for p in posts if p.id not in seen_ids), None)
-    if selected is None:
+    unseen_posts = [p for p in posts if p.id not in seen_ids]
+    if not unseen_posts:
         raise RuntimeError("No unseen Product Hunt post in fetched results.")
-    selected = enrich_post(session, selected)
+    selected: ToolPost | None = None
+    fallback_selected: ToolPost | None = None
+    for candidate in unseen_posts[:10]:
+        enriched = enrich_post(session, candidate)
+        if fallback_selected is None:
+            fallback_selected = enriched
+        if enriched.image_urls:
+            selected = enriched
+            break
+    if selected is None:
+        selected = fallback_selected
+    if selected is None:
+        raise RuntimeError("No valid Product Hunt post after enrichment.")
     log(f"selected: {selected.name} ({selected.id})")
     log(f"source images found: {len(selected.image_urls)}")
     theme_key = choose_theme(selected)
