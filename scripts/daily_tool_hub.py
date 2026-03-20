@@ -595,26 +595,34 @@ def ensure_wxhtml(
 
 def create_fallback_cover(post: ToolPost, theme_key: str) -> str:
     theme = THEMES.get(theme_key, THEMES["builder"])
-    title = escape((post.name or "Product Hunt Tool")[:48])
-    subtitle_raw = post.tagline or post.description or "Today on Product Hunt"
-    subtitle = escape(subtitle_raw[:92])
-    svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
-<defs>
-  <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-    <stop offset="0%" stop-color="{theme['bg']}"/>
-    <stop offset="100%" stop-color="{theme['card']}"/>
-  </linearGradient>
-</defs>
-<rect width="1280" height="720" fill="url(#bg)"/>
-<rect x="52" y="52" width="1176" height="616" rx="24" fill="#ffffff" opacity="0.06"/>
-<text x="96" y="150" fill="{theme['accent']}" font-size="32" font-family="Arial, sans-serif">DAILY TOOL RADAR</text>
-<text x="96" y="250" fill="#ffffff" font-size="64" font-weight="700" font-family="Arial, sans-serif">{title}</text>
-<text x="96" y="332" fill="#d1d5db" font-size="34" font-family="Arial, sans-serif">{subtitle}</text>
-<text x="96" y="622" fill="#93c5fd" font-size="28" font-family="Arial, sans-serif">producthunt.com</text>
-</svg>
-"""
-    file = ASSETS_DIR / "cover_fallback.svg"
-    file.write_text(svg, encoding="utf-8")
+    title = (post.name or "Product Hunt Tool")[:48]
+    subtitle = (post.tagline or post.description or "Today on Product Hunt")[:92]
+    # Lazy import so local lint/compile does not require Pillow until runtime.
+    from PIL import Image, ImageDraw, ImageFont
+
+    width, height = 1280, 720
+    image = Image.new("RGB", (width, height), theme["bg"])
+    draw = ImageDraw.Draw(image)
+
+    try:
+        title_font = ImageFont.truetype("DejaVuSans-Bold.ttf", 64)
+        sub_font = ImageFont.truetype("DejaVuSans.ttf", 34)
+        badge_font = ImageFont.truetype("DejaVuSans.ttf", 32)
+        foot_font = ImageFont.truetype("DejaVuSans.ttf", 28)
+    except Exception:
+        title_font = ImageFont.load_default()
+        sub_font = ImageFont.load_default()
+        badge_font = ImageFont.load_default()
+        foot_font = ImageFont.load_default()
+
+    draw.rectangle((52, 52, 1228, 668), outline=theme["accent"], width=2)
+    draw.text((96, 110), "DAILY TOOL RADAR", fill=theme["accent"], font=badge_font)
+    draw.text((96, 220), title, fill="#FFFFFF", font=title_font)
+    draw.text((96, 320), subtitle, fill="#D1D5DB", font=sub_font)
+    draw.text((96, 622), "producthunt.com", fill="#93C5FD", font=foot_font)
+
+    file = ASSETS_DIR / "cover_fallback.png"
+    image.save(file, format="PNG")
     return to_github_raw_url(file.relative_to(ROOT))
 
 
