@@ -91,22 +91,50 @@ def normalize_url(url: Any) -> str | None:
     return u
 
 
-def load_seen_ids() -> set[str]:
+def load_seen_state() -> tuple[set[str], set[str]]:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     if not SEEN_FILE.exists():
-        return set()
+        return set(), set()
     try:
         data = json.loads(SEEN_FILE.read_text(encoding="utf-8"))
         if isinstance(data, list):
-            return {str(x).strip() for x in data if str(x).strip()}
+            # Backward compatibility with old format: list of ids only.
+            return {str(x).strip() for x in data if str(x).strip()}, set()
+        if isinstance(data, dict):
+            ids_raw = data.get("seen_ids", [])
+            fps_raw = data.get("seen_fingerprints", [])
+            ids = {str(x).strip() for x in ids_raw if str(x).strip()}
+            fps = {str(x).strip() for x in fps_raw if str(x).strip()}
+            return ids, fps
     except Exception as exc:
         log(f"warn: cannot parse seen file: {exc}")
-    return set()
+    return set(), set()
 
 
-def save_seen_ids(ids: set[str]) -> None:
+def save_seen_state(ids: set[str], fingerprints: set[str]) -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    SEEN_FILE.write_text(json.dumps(sorted(ids), ensure_ascii=False, indent=2), encoding="utf-8")
+    payload = {
+        "seen_ids": sorted(ids),
+        "seen_fingerprints": sorted(fingerprints),
+    }
+    SEEN_FILE.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def tool_fingerprint(post: ToolPost) -> str:
+    website = (post.website or "").strip().lower()
+    if website:
+        parsed = urlparse(website)
+        host = parsed.netloc.replace("www.", "")
+        path = parsed.path.rstrip("/")
+        return f"w:{host}{path}"
+    ph_url = (post.ph_url or "").strip().lower()
+    if ph_url:
+        parsed = urlparse(ph_url)
+        path = parsed.path.rstrip("/")
+        if path:
+            return f"ph:{path}"
+    normalized_name = re.sub(r"\s+", "", (post.name or "").strip().lower())
+    return f"n:{normalized_name}"
 
 
 def clean_generated_outputs() -> None:
@@ -439,6 +467,17 @@ def clamp_summary(text: str, max_len: int = 30) -> str:
     return s[:max_len]
 
 
+def make_click_title(text: str, post: ToolPost) -> str:
+    raw = re.sub(r"\s+", "", str(text or "")).strip()
+    click_words = ["实测", "爆火", "效率翻倍", "别错过", "神器", "上手"]
+    if not raw:
+        raw = f"实测{post.name}：这工具真能提效"
+    if not any(word in raw for word in click_words):
+        raw = f"实测{raw}"
+    raw = re.sub(r"[。！？!?.]+$", "", raw)
+    return raw[:30]
+
+
 def call_gemini(
     session: requests.Session,
     api_key: str,
@@ -459,15 +498,20 @@ Output JSON only with exactly:
 - wxhtml
 
 Requirements:
-1) title: Simplified Chinese, 20-30 chars, attractive but factual.
+1) title: Simplified Chinese, 20-30 chars, attractive but factual, with high-click hook style suitable for WeChat recommendation feed.
 2) summary: Simplified Chinese, 15-30 chars.
 3) wxhtml: body fragment only, no markdown, no script.
 4) Content should be practical and detailed (around 1000+ Chinese chars).
 5) Structure suggestion: one-line positioning, core highlights, target users, use cases, 3-step onboarding, alternatives.
 6) Use provided image URLs as much as possible via <img>.
 7) The layout must be mixed and visual: use cards/lists/checklists/quote blocks; avoid long pure-text wall.
-8) Avoid repetitive or generic AI-style wording.
-9) Do not output anything outside JSON.
+8) WeChat recommendation style:
+   - first screen must have a strong hook sentence;
+   - use short paragraphs and numbered section headers;
+   - include explicit benefit statements and scenario-based copy;
+   - style should be eye-catching but not fake/exaggerated.
+9) Avoid repetitive or generic AI-style wording.
+10) Do not output anything outside JSON.
 
 Tool name: {post.name}
 Tagline: {post.tagline}
@@ -556,7 +600,7 @@ def ensure_wxhtml(
             "<h3 style='margin:0 0 8px;font-size:20px;'>上手建议（3步）</h3>"
             "<p>第一步：先用最小场景快速验证工具是否解决你的核心问题，不要一次性迁移全部流程。"
             "第二步：设置1-2个可量化指标（如节省时间、转化率、交付速度）做一周观察。"
-            "第三步：把稳定动作沉淀成模板，让团队其他成员可复制，避免只停留在“尝鲜”。</p>"
+            "第三步：把稳定动作沉淀成模板，让团队其他成员可复制，避免只停留在尝鲜阶段。</p>"
             "</section>"
         )
 
@@ -568,7 +612,9 @@ def ensure_wxhtml(
         f"<span style='padding:4px 8px;border-radius:999px;background:#334155;font-size:12px;'>▲ {post.votes} votes</span>"
         f"<span style='padding:4px 8px;border-radius:999px;background:#334155;font-size:12px;'>💬 {post.comments} comments</span>"
         "</div>"
-        f"<p style='margin:10px 0 0 0;font-size:14px;line-height:1.8;color:#e2e8f0;'>{escape(post.tagline or post.description or '')}</p>"
+        f"<p style='margin:10px 0 0 0;font-size:18px;line-height:1.55;font-weight:700;color:#f8fafc;'>"
+        f"别只看热度，{escape(post.name)}值不值得用？</p>"
+        f"<p style='margin:8px 0 0 0;font-size:14px;line-height:1.8;color:#e2e8f0;'>{escape(post.tagline or post.description or '')}</p>"
         "</section>"
     )
     body = overview + body
@@ -667,14 +713,19 @@ def main() -> int:
         raise RuntimeError("Missing GEMINI_API_KEY environment variable.")
 
     clean_generated_outputs()
-    seen_ids = load_seen_ids()
-    log(f"loaded seen ids: {len(seen_ids)}")
+    seen_ids, seen_fingerprints = load_seen_state()
+    log(f"loaded seen state: ids={len(seen_ids)} fingerprints={len(seen_fingerprints)}")
 
     session = requests.Session()
     posts = fetch_posts(session, token=ph_token, first=30)
     log(f"fetched posts: {len(posts)}")
 
-    unseen_posts = [p for p in posts if p.id not in seen_ids]
+    unseen_posts = [
+        p for p in posts if p.id not in seen_ids and tool_fingerprint(p) not in seen_fingerprints
+    ]
+    if not unseen_posts:
+        # Fallback to id-based dedupe if all fingerprints hit (for compatibility).
+        unseen_posts = [p for p in posts if p.id not in seen_ids]
     if not unseen_posts:
         raise RuntimeError("No unseen Product Hunt post in fetched results.")
     selected: ToolPost | None = None
@@ -690,7 +741,8 @@ def main() -> int:
         selected = fallback_selected
     if selected is None:
         raise RuntimeError("No valid Product Hunt post after enrichment.")
-    log(f"selected: {selected.name} ({selected.id})")
+    selected_fp = tool_fingerprint(selected)
+    log(f"selected: {selected.name} ({selected.id}) fp={selected_fp}")
     log(f"source images found: {len(selected.image_urls)}")
     theme_key = choose_theme(selected)
 
@@ -698,11 +750,14 @@ def main() -> int:
     if not github_images:
         fallback_cover = create_fallback_cover(selected, theme_key=theme_key)
         github_images = [fallback_cover]
-        log("warn: no remote images found, generated fallback SVG cover.")
+        log("warn: no remote images found, generated fallback PNG cover.")
     log(f"images downloaded: {len(github_images)}")
 
     gemini = call_gemini(session, api_key=gemini_api_key, post=selected, image_urls=github_images)
-    title = str(gemini.get("title", "")).strip() or f"{selected.name}：今天值得试的效率工具"
+    title = make_click_title(
+        str(gemini.get("title", "")).strip() or f"{selected.name}：今天值得试的效率工具",
+        selected,
+    )
     summary = clamp_summary(str(gemini.get("summary", "")).strip())
     wxhtml_raw = str(gemini.get("wxhtml", "")).strip()
 
@@ -721,8 +776,9 @@ def main() -> int:
     log(f"written: {POST_JSON}")
 
     seen_ids.add(selected.id)
-    save_seen_ids(seen_ids)
-    log(f"seen ids updated: {len(seen_ids)}")
+    seen_fingerprints.add(selected_fp)
+    save_seen_state(seen_ids, seen_fingerprints)
+    log(f"seen state updated: ids={len(seen_ids)} fingerprints={len(seen_fingerprints)}")
     return 0
 
 
@@ -732,3 +788,4 @@ if __name__ == "__main__":
     except Exception as exc:
         log(f"error: {exc}")
         raise
+
