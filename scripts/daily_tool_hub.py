@@ -431,6 +431,14 @@ def build_tags(post: ToolPost) -> list[str]:
     return tags[:8]
 
 
+def clamp_summary(text: str, max_len: int = 30) -> str:
+    s = re.sub(r"\s+", "", str(text or "")).strip()
+    s = re.sub(r"[。！？!?.]+$", "", s)
+    if not s:
+        return "今日工具速览：值得试用的新工具"
+    return s[:max_len]
+
+
 def call_gemini(
     session: requests.Session,
     api_key: str,
@@ -452,13 +460,14 @@ Output JSON only with exactly:
 
 Requirements:
 1) title: Simplified Chinese, 20-30 chars, attractive but factual.
-2) summary: Simplified Chinese, 100-180 chars.
+2) summary: Simplified Chinese, 15-30 chars.
 3) wxhtml: body fragment only, no markdown, no script.
 4) Content should be practical and detailed (around 1000+ Chinese chars).
 5) Structure suggestion: one-line positioning, core highlights, target users, use cases, 3-step onboarding, alternatives.
 6) Use provided image URLs as much as possible via <img>.
-7) Avoid repetitive or generic AI-style wording.
-8) Do not output anything outside JSON.
+7) The layout must be mixed and visual: use cards/lists/checklists/quote blocks; avoid long pure-text wall.
+8) Avoid repetitive or generic AI-style wording.
+9) Do not output anything outside JSON.
 
 Tool name: {post.name}
 Tagline: {post.tagline}
@@ -531,6 +540,15 @@ def ensure_wxhtml(
     body = re.sub(r"<script[\s\S]*?</script>", "", body, flags=re.I)
     body = re.sub(r"</?(html|head|body)[^>]*>", "", body, flags=re.I)
 
+    # If model output has no image at all, inject one near the top.
+    if "<img" not in body.lower() and github_images:
+        body = (
+            "<figure style='margin:0 0 14px 0;padding:6px;border-radius:10px;border:1px solid #e5e7eb;'>"
+            f"<img src='{escape(github_images[0])}' style='width:100%;height:auto;border-radius:8px;'/>"
+            "</figure>"
+            + body
+        )
+
     text_len = len(BeautifulSoup(body, "html.parser").get_text(" ", strip=True))
     if text_len < 700:
         body += (
@@ -541,6 +559,19 @@ def ensure_wxhtml(
             "第三步：把稳定动作沉淀成模板，让团队其他成员可复制，避免只停留在“尝鲜”。</p>"
             "</section>"
         )
+
+    overview = (
+        f"<section style='margin:0 0 14px 0;padding:12px;border-radius:10px;background:{theme['card']};color:#e5e7eb;'>"
+        "<div style='display:flex;flex-wrap:wrap;gap:8px;'>"
+        f"<span style='padding:4px 8px;border-radius:999px;background:{theme['accent']};color:#0b1220;font-size:12px;'>"
+        f"{escape(post.name)}</span>"
+        f"<span style='padding:4px 8px;border-radius:999px;background:#334155;font-size:12px;'>▲ {post.votes} votes</span>"
+        f"<span style='padding:4px 8px;border-radius:999px;background:#334155;font-size:12px;'>💬 {post.comments} comments</span>"
+        "</div>"
+        f"<p style='margin:10px 0 0 0;font-size:14px;line-height:1.8;color:#e2e8f0;'>{escape(post.tagline or post.description or '')}</p>"
+        "</section>"
+    )
+    body = overview + body
 
     missing_images = [u for u in github_images if u not in body]
     for u in missing_images:
@@ -553,8 +584,10 @@ def ensure_wxhtml(
 
     tags = build_tags(post)
     tags_text = " ".join(tags)
-    website_html = (
-        f"<p style='margin:8px 0 0;'>官网：<a href='{escape(post.website)}'>{escape(post.website)}</a></p>"
+    website_block = (
+        f"<section style='margin-top:10px;padding:10px;border:1px dashed #cbd5e1;border-radius:10px;'>"
+        f"<p style='margin:0;font-size:14px;'>工具官网：<a href='{escape(post.website)}'>{escape(post.website)}</a></p>"
+        "</section>"
         if post.website
         else ""
     )
@@ -564,10 +597,9 @@ def ensure_wxhtml(
         "border-radius:10px;background:#f8fafc;'>"
         "<h3 style='margin:0 0 8px;font-size:18px;'>快速结论</h3>"
         f"<p style='margin:0;'>{escape(summary)}</p>"
-        f"<p style='margin:8px 0 0;'>Product Hunt：<a href='{escape(post.ph_url)}'>{escape(post.ph_url)}</a></p>"
-        f"{website_html}"
         f"<p style='margin:10px 0 0;color:#334155;font-size:14px;'>标签：{escape(tags_text)}</p>"
         "</section>"
+        f"{website_block}"
     )
 
     return (
@@ -671,9 +703,7 @@ def main() -> int:
 
     gemini = call_gemini(session, api_key=gemini_api_key, post=selected, image_urls=github_images)
     title = str(gemini.get("title", "")).strip() or f"{selected.name}：今天值得试的效率工具"
-    summary = str(gemini.get("summary", "")).strip() or (
-        "这是一款今天在 Product Hunt 上值得关注的工具，兼顾效率、上手成本与实际场景。"
-    )
+    summary = clamp_summary(str(gemini.get("summary", "")).strip())
     wxhtml_raw = str(gemini.get("wxhtml", "")).strip()
 
     wxhtml = ensure_wxhtml(
