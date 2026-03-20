@@ -628,6 +628,30 @@ Available image URLs: {json.dumps(image_urls, ensure_ascii=False)}
     return gemini_generate_json(session, api_key, prompt, temperature=0.75)
 
 
+def enforce_inner_side_spacing(html_fragment: str, px: int = 2) -> str:
+    soup = BeautifulSoup(html_fragment or "", "html.parser")
+    side_style = (
+        f"padding-left:{px}px;padding-right:{px}px;"
+        f"margin-left:{px}px;margin-right:{px}px;"
+    )
+    skip_tags = {"img", "br", "hr", "source"}
+    for tag in soup.find_all(True):
+        if tag.name.lower() in skip_tags:
+            continue
+        style = str(tag.get("style", "")).strip()
+        if style:
+            style = re.sub(
+                r"(?i)(?:^|;)\s*(padding-left|padding-right|margin-left|margin-right)\s*:[^;]*",
+                "",
+                style,
+            )
+            style = re.sub(r";{2,}", ";", style).strip(" ;")
+        if style:
+            style += ";"
+        tag["style"] = style + side_style
+    return str(soup)
+
+
 def ensure_wxhtml(
     wxhtml: str,
     title: str,
@@ -711,6 +735,7 @@ def ensure_wxhtml(
         "</section>"
         f"{website_block}"
     )
+    body = enforce_inner_side_spacing(body, px=2)
 
     return (
         f"<section style='font-size:16px;line-height:1.78;color:{theme['fg']};padding:0 2px;'>"
