@@ -20,6 +20,11 @@ OUTPUT_DIR = ROOT / "output"
 ASSETS_DIR = ROOT / "assets" / "today"
 POST_JSON = OUTPUT_DIR / "post.json"
 SEEN_FILE = DATA_DIR / "seen_posts.json"
+HEADER_IMG = (
+    "https://mmbiz.qpic.cn/mmbiz_gif/"
+    "xm1dT1jCe8lIO3P2oFVtd1x040PKGCRPN033gUTrHQQz0Licdqug5X1QgUPQBRCicoTqdYMrpgk7etibXLkK9rwcg/0"
+    "?wx_fmt=gif&from=appmsg"
+)
 
 PH_ENDPOINT = "https://api.producthunt.com/v2/api/graphql"
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3-flash-preview")
@@ -549,6 +554,9 @@ def ensure_wxhtml(
 
     return (
         f"<section style='font-size:16px;line-height:1.78;color:{theme['fg']};'>"
+        "<section style='margin:0 0 14px;'>"
+        f"<img src='{HEADER_IMG}' style='width:100%;height:auto;display:block;border-radius:12px;'/>"
+        "</section>"
         f"<section style='padding:14px;border-radius:12px;background:{theme['bg']};"
         "border:1px solid #1f2937;margin-bottom:14px;'>"
         f"<p style='margin:0 0 6px;font-size:13px;color:{theme['accent']};'>{escape(theme['name'])}</p>"
