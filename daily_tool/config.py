@@ -28,7 +28,8 @@ USER_AGENT = (
 PRIMARY_MODEL_NAME = "google/gemini-2.0-flash-001"
 FALLBACK_MODEL_NAME = "google/gemini-2.0-flash-lite-001"
 
-# OpenRouter Pool
+# OpenRouter
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 OPENROUTER_MODELS = [
     "deepseek/deepseek-chat",
     "qwen/qwen-2.5-72b-instruct",
