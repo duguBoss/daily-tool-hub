@@ -30,9 +30,7 @@ jobs:
             ${{ runner.os }}-pip-
 
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          pip install -e .
+        run: pip install -r requirements.txt
 
       - name: Generate daily tool share
         env:
@@ -44,7 +42,9 @@ jobs:
           GITHUB_REF_NAME: ${{ github.ref_name }}
           TZ: Asia/Shanghai
           PYTHONUNBUFFERED: "1"
-        run: python scripts/daily_tool_hub.py
+        run: |
+          export PYTHONPATH="$PWD:$PYTHONPATH"
+          python scripts/daily_tool_hub.py
 
       - name: Commit and push
         run: |
