@@ -36,9 +36,12 @@ def build_tags(post: Any) -> list[str]:
 
 
 def _distribute_images(body: str, images: list[str]) -> str:
-    """Distribute images gracefully among paragraphs."""
+    """Distribute up to 3 images gracefully among paragraphs."""
     if not images:
         return body
+        
+    # Limit to max 3 images as requested
+    images = images[:3]
         
     soup = BeautifulSoup(body, "html.parser")
     paragraphs = soup.find_all("p")
@@ -54,15 +57,19 @@ def _distribute_images(body: str, images: list[str]) -> str:
 
     num_p = len(paragraphs)
     num_img = len(missing_images)
+    
+    # Better distribution logic: spacing them out more evenly
     step = max(1, num_p // (num_img + 1))
     
     for i, img_url in enumerate(missing_images):
-        idx = (i + 1) * step
+        idx = (i + 1) * step - 1
         if idx >= num_p:
             idx = num_p - 1
+        if idx < 0:
+            idx = 0
             
         target_p = paragraphs[idx]
-        img_tag = soup.new_tag("img", src=img_url, style="width:100%;height:auto;margin:20px 0;display:block;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.05);")
+        img_tag = soup.new_tag("img", src=img_url, style="width:100%;height:auto;margin:24px 0;display:block;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.08);")
         target_p.insert_after(img_tag)
         
     for empty_img in soup.find_all("img"):
@@ -85,7 +92,7 @@ def ensure_wxhtml(
     body = (wxhtml or "").strip()
     if not body:
         body = (
-            f"<h2 style='font-size:18px;font-weight:600;color:#0f172a;margin:28px 0 12px 0;border-bottom:1px solid #e2e8f0;padding-bottom:6px;'>{escape(post.name)}上手建议</h2>"
+            f"<h2 style='font-size:18px;font-weight:600;color:#0f172a;margin:28px 0 12px 0;border-bottom:1px solid #e2e8f0;padding-bottom:6px;'>{escape(post.name)} 上手建议</h2>"
             "<p style='margin:0 0 16px;color:#334155;font-size:16px;line-height:1.7;'>这是一款值得关注的产品工具，这可能会改变你的工作流。</p>"
         )
 
@@ -101,13 +108,16 @@ def ensure_wxhtml(
              "<p style='margin:0 0 16px;color:#334155;font-size:16px;line-height:1.7;'>建议安全团队及效率达人按以下优先级体验：<br><strong style='color:#0369a1;'>1. 极速验证：</strong> 用最小场景验证能否在5分钟内打通你的核心痛点链路。<br><strong style='color:#0369a1;'>2. 指标追踪：</strong> 观察一周该工具带来的时间节省程度与产出转化率提升。<br><strong style='color:#0369a1;'>3. 固化模板：</strong> 建立标准SOP模板，让更多团队成员轻松复用你的跑通经验。</p>"
         )
 
-    # Distribute images flawlessly
+    # Distribute images (capped at 3 and better spacing)
     body = _distribute_images(body, github_images)
 
+    # Tags with horizontal scroll
     tags = build_tags(post)
-    tags_text = "".join([f"<span style='display:inline-block;margin:0 6px 6px 0;color:#64748b;font-size:14px;'>{escape(t)}</span>" for t in tags])
+    tags_text = "".join([f"<span style='display:inline-block;margin:0 12px 0 0;color:#64748b;font-size:13px;white-space:nowrap;'>{escape(t)}</span>" for t in tags])
+    
+    # Website link with clear separation
     website_block = (
-        f"<p style='margin:0 0 10px 0;font-size:15px;color:#0f172a;'><strong style='color:#0369a1;'>🌍 直达官网：</strong><a href='{escape(post.website)}' style='color:#0284c7;text-decoration:none;'>{escape(post.website)}</a></p>"
+        f"<p style='margin:0 0 18px 0;font-size:15px;color:#0f172a;'><strong style='color:#0369a1;'>🌍 直达官网：</strong><br/><a href='{escape(post.website)}' style='color:#0284c7;text-decoration:none;word-break:break-all;font-size:14px;'>{escape(post.website)}</a></p>"
         if post.website
         else ""
     )
@@ -120,23 +130,20 @@ def ensure_wxhtml(
         "</section>"
         f"<section style='margin-top:28px;border-top:1px dashed #cbd5e1;padding-top:16px;'>"
         f"{website_block}"
-        f"<section>{tags_text}</section>"
-        "</section>"
+        f"<section style='overflow-x:auto;white-space:nowrap;-webkit-overflow-scrolling:touch;padding-bottom:8px;'>{tags_text}</section>"
+        f"</section>"
     )
 
-    # Wrap the entire article cleanly without boxy constraints
+    # Final wrap (Removed H1 Title and Votes/Comments from header per user request)
     return (
         "<section style=\"font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif;font-size:16px;color:#333;line-height:1.7;background-color:#fff;text-align:justify;word-wrap:break-word;\">"
         f"<section style=\"width:100%;margin-bottom:28px;\">"
         f"<img src=\"{HEADER_IMG}\" style=\"width:100%;display:block;\" alt=\"Header\"/>"
         "</section>"
         "<section>"
-        f"<section style=\"margin-bottom:28px;\">"
-        f"<h1 style=\"color:#1a1a1a;font-size:22px;font-weight:600;line-height:1.5;margin:0 0 12px 0;\">{escape(title)}</h1>"
+        f"<section style=\"margin-bottom:24px;\">"
         f"<section style=\"display:flex;gap:8px;align-items:center;\">"
         f"<span style=\"display:inline-block;padding:2px 8px;background-color:#dbeafe;color:#1e3a8a;font-size:12px;font-weight:500;border-radius:2px;letter-spacing:0.5px;\">效率先锋</span>"
-        f"<span style=\"display:inline-block;padding:2px 8px;background-color:#f1f5f9;color:#475569;font-size:12px;font-weight:500;border-radius:2px;\">🔥 {post.votes} 赞</span>"
-        f"<span style=\"display:inline-block;padding:2px 8px;background-color:#f1f5f9;color:#475569;font-size:12px;font-weight:500;border-radius:2px;\">💬 {post.comments} 评</span>"
         "</section>"
         "</section>"
         f"{body}"

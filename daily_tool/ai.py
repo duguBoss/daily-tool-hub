@@ -217,6 +217,7 @@ Requirements:
 2) summary: Simplified Chinese, 60-120 chars, a sharp 1-2 sentence core value prop.
 3) wxhtml:
    - Full length around 1000-1500 chars.
+   - Do NOT include any title (H1, etc.) inside wxhtml; it is already defined in the "title" field.
    - Do NOT stack rigid sections. Write a highly fluid, engaging narrative.
    - Use this exact format strictly for section headers (no extra divs/sections wrapping everything):
      <h2 style="font-size: 18px; font-weight: 600; color: #0f172a; margin: 28px 0 12px 0; border-bottom: 1px solid #e2e8f0; padding-bottom: 6px;">模块名称</h2>
