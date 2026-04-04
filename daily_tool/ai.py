@@ -207,30 +207,26 @@ Website: {post.website or ""}
 def build_writer_prompt(post: Any, image_urls: list[str]) -> str:
     """Build prompt for article generation."""
     return f"""
-You are a product analyst and Chinese tech editor.
-Turn today's Product Hunt launch into a practical WeChat article.
+You are a top-tier product analyst and tech media editor.
+Turn today's Product Hunt launch into a practical, highly readable, premium WeChat article.
 
-Output JSON only with exactly:
-- title
-- summary
-- wxhtml
+Output JSON only: title, summary, wxhtml.
 
 Requirements:
-1) title: Simplified Chinese, 20-30 chars, attractive but factual, with high-click hook style suitable for WeChat recommendation feed.
-2) summary: Simplified Chinese, 15-30 chars.
-3) wxhtml: body fragment only, no markdown, no script.
-4) Content should be practical and detailed (around 1000+ Chinese chars).
-5) Structure suggestion: one-line positioning, core highlights, target users, use cases, 3-step onboarding, alternatives.
-6) Use provided image URLs as much as possible via <img>.
-7) The layout must be mixed and visual: use cards/lists/checklists/quote blocks; avoid long pure-text wall.
-8) WeChat recommendation style:
-   - first screen must have a strong hook sentence;
-   - use short paragraphs and numbered section headers;
-   - include explicit benefit statements and scenario-based copy;
-   - style should be eye-catching but not fake/exaggerated.
-9) Avoid repetitive or generic AI-style wording.
-10) Keep left/right spacing very small in your inline styles (1-2px), because WeChat already applies page padding.
-11) Do not output anything outside JSON.
+1) title: Simplified Chinese, 18-28 chars, high-click, factual, professional.
+2) summary: Simplified Chinese, 60-120 chars, a sharp 1-2 sentence core value prop.
+3) wxhtml:
+   - Full length around 1000-1500 chars.
+   - Do NOT stack rigid sections. Write a highly fluid, engaging narrative.
+   - Use this exact format strictly for section headers (no extra divs/sections wrapping everything):
+     <h2 style="font-size: 18px; font-weight: 600; color: #0f172a; margin: 28px 0 12px 0; border-bottom: 1px solid #e2e8f0; padding-bottom: 6px;">模块名称</h2>
+   - Paragraphs: `<p style="margin: 0 0 16px; font-size: 16px; color: #334155; line-height: 1.7; text-align: justify;">`
+   - Highlights: Use `<strong style="color: #0369a1; font-weight: 600;">关键字</strong>` for core concepts, features, or metrics.
+   - Quotes/Emphasis: 
+     <section style="margin:20px 0;padding:16px;background-color:#f8fafc;border-left:3px solid #0369a1;">
+       <p style="margin:0;font-size:15px;color:#475569;line-height:1.7;">引用内容</p>
+     </section>
+4) DO NOT output ANY `<img>`, `<video>`, or `<a>` tags inside wxhtml. We will programmatically inject premium images into your text.
 
 Tool name: {post.name}
 Tagline: {post.tagline}
@@ -240,7 +236,6 @@ Comments: {post.comments}
 Topics: {json.dumps(post.topics, ensure_ascii=False)}
 Product Hunt URL: {post.ph_url}
 Official Website: {post.website or ''}
-Available image URLs: {json.dumps(image_urls, ensure_ascii=False)}
 """.strip()
 
 
