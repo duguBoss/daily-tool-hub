@@ -214,7 +214,7 @@ Output JSON only: title, summary, wxhtml.
 
 Requirements:
 1) title: Simplified Chinese, 18-28 chars, high-click, factual, professional.
-2) summary: Simplified Chinese, 60-120 chars, a sharp 1-2 sentence core value prop.
+2) summary: Simplified Chinese, 60-120 chars, a sharp 1-2 sentence core value prop. MUST be complete and end with proper punctuation (。!?).
 3) wxhtml:
    - Full length around 1000-1500 chars.
    - Do NOT include any title (H1, etc.) inside wxhtml; it is already defined in the "title" field.

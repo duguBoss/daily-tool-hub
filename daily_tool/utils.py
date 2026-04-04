@@ -78,16 +78,22 @@ def tool_fingerprint(post: Any) -> str:
     return f"n:{normalized_name}"
 
 
-def clamp_summary(text: str, max_len: int = 100) -> str:
+def clamp_summary(text: str, max_len: int = 120) -> str:
     """Clamp summary text length."""
-    s = re.sub(r"\s+", "", str(text or "")).strip()
-    s = re.sub(r"[。！？!??.]+$", "", s)
+    s = str(text or "").strip()
+    # 只移除多余的空白，保留单个空格
+    s = re.sub(r"\s+", " ", s).strip()
     if not s:
         return "今日工具速览：值得试用的新工具"
     if len(s) <= max_len:
         return s
-    # 截断到指定长度，并确保不以标点符号结尾
+    # 截断到指定长度，并尝试在句子结尾处截断
     truncated = s[:max_len]
+    # 尝试找到最后一个完整的句子（以句号、问号、感叹号结尾）
+    for punct in [".", "。", "!", "！", "?", "？"]:
+        last_punct = truncated.rfind(punct)
+        if last_punct > max_len * 0.6:  # 至少保留60%的内容
+            return truncated[:last_punct + 1]
     return truncated
 
 
