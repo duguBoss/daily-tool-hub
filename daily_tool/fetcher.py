@@ -138,7 +138,6 @@ def fetch_posts(session: requests.Session, token: str, first: int = 30) -> list[
             votesCount
             commentsCount
             createdAt
-            postedAt
             thumbnail { url }
             media {
               type
