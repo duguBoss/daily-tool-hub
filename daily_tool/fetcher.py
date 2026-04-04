@@ -59,38 +59,34 @@ def parse_topics(node: dict[str, Any]) -> list[str]:
 
 
 def parse_node_images(node: dict[str, Any]) -> list[str]:
-    """Parse images from node."""
+    """Parse images from node including thumbnail and media."""
     urls: list[str] = []
+    
+    # 1. Standard Thumbnail
+    thumbnail = node.get("thumbnail")
+    if isinstance(thumbnail, dict):
+        u = normalize_url(thumbnail.get("url"))
+        if u:
+            urls.append(u)
+
+    # 2. Media items (screenshots/images)
+    media = node.get("media")
+    if isinstance(media, list):
+        for m in media:
+            if not isinstance(m, dict):
+                continue
+            m_type = str(m.get("type", "")).lower()
+            if "image" in m_type or "screenshot" in m_type:
+                u = normalize_url(m.get("url") or m.get("imageUrl"))
+                if u:
+                    urls.append(u)
+    
+    # 3. Fallback for different API versions
     for key in ("thumbnailUrl", "screenshotUrl"):
         u = normalize_url(node.get(key))
         if u:
             urls.append(u)
 
-    thumbnail = node.get("thumbnail")
-    if isinstance(thumbnail, dict):
-        for key in ("url", "imageUrl"):
-            u = normalize_url(thumbnail.get(key))
-            if u:
-                urls.append(u)
-
-    def append_media_item(media_item: dict[str, Any]) -> None:
-        if not isinstance(media_item, dict):
-            return
-        m_type = str(media_item.get("type", "")).lower()
-        if m_type and "image" not in m_type and "screenshot" not in m_type:
-            return
-        for k in ("url", "imageUrl"):
-            u = normalize_url(media_item.get(k))
-            if u:
-                urls.append(u)
-
-    media = node.get("media")
-    if isinstance(media, list):
-        for m in media:
-            append_media_item(m)
-    elif isinstance(media, dict):
-        for edge in media.get("edges", []) or []:
-            append_media_item((edge or {}).get("node", {}) or {})
     return list(dict.fromkeys(urls))
 
 
@@ -127,117 +123,102 @@ def parse_posts_from_response(data: dict[str, Any]) -> list[ToolPost]:
 
 
 def fetch_posts(session: requests.Session, token: str, first: int = 30) -> list[ToolPost]:
-    """Fetch posts from Product Hunt with fallback queries."""
-    queries = [
-        """
-        query FetchPosts($first: Int!) {
-          posts(first: $first, order: NEWEST) {
-            edges {
-              node {
-                id
-                name
-                tagline
-                description
-                url
-                website
-                votesCount
-                commentsCount
-                postedAt
-                thumbnailUrl
-                thumbnail { url }
-                topic { name }
-                topics(first: 5) { edges { node { name } } }
-                media(first: 8) {
-                  edges {
-                    node {
-                      type
-                      url
-                      imageUrl
-                      videoUrl
-                    }
-                  }
-                }
-              }
+    """Fetch posts from Product Hunt with standardized GraphQL query."""
+    query = """
+    query FetchPosts($first: Int!) {
+      posts(first: $first, order: NEWEST) {
+        edges {
+          node {
+            id
+            name
+            tagline
+            description
+            url
+            website
+            votesCount
+            commentsCount
+            createdAt
+            postedAt
+            thumbnail { url }
+            media {
+              type
+              url
             }
+            topics(first: 5) { edges { node { name } } }
           }
         }
-        """,
-        """
-        query FetchPosts($first: Int!) {
-          posts(first: $first, order: NEWEST) {
-            edges {
-              node {
-                id
-                name
-                tagline
-                description
-                url
-                website
-                votesCount
-                commentsCount
-                postedAt
-              }
-            }
-          }
-        }
-        """,
-        """
-        query FetchPosts($first: Int!) {
-          posts(first: $first, order: NEWEST) {
-            edges {
-              node {
-                id
-                name
-                tagline
-                url
-                website
-              }
-            }
-          }
-        }
-        """,
-    ]
+      }
+    }
+    """
+    
+    try:
+        data = ph_graphql(session, token=token, query=query, variables={"first": first})
+        gql_errors = data.get("errors") or []
+        if gql_errors:
+            raise RuntimeError("; ".join(str(e.get("message", e)) for e in gql_errors))
+        
+        posts = parse_posts_from_response(data)
+        if posts:
+            log(f"Successfully fetched {len(posts)} posts from PH.")
+            # Log first post images as sample
+            sample = posts[0]
+            log(f"Sample data - Name: {sample.name}, Images found: {len(sample.image_urls)}")
+            for img in sample.image_urls[:3]:
+                log(f"  - Image URL: {img}")
+            return posts
+    except Exception as exc:
+        log(f"Error fetching posts: {exc}")
+        raise
 
-    errors: list[str] = []
-    for q in queries:
-        try:
-            data = ph_graphql(session, token=token, query=q, variables={"first": first})
-            gql_errors = data.get("errors") or []
-            if gql_errors:
-                errors.append("; ".join(str(e.get("message", e)) for e in gql_errors))
-                continue
-            posts = parse_posts_from_response(data)
-            if posts:
-                return posts
-        except Exception as exc:
-            errors.append(str(exc))
-            continue
-    raise RuntimeError("Failed to fetch Product Hunt posts. " + " | ".join(errors[:3]))
+    raise RuntimeError("Failed to fetch Product Hunt posts.")
 
 
 def scrape_meta_images(session: requests.Session, url: str) -> list[str]:
-    """Scrape images from meta tags."""
+    """Scrape images from meta tags and main content."""
     try:
-        html = session.get(url, headers={"User-Agent": USER_AGENT}, timeout=30).text
+        resp = session.get(url, headers={"User-Agent": USER_AGENT}, timeout=30)
+        if resp.status_code != 200:
+            return []
+        html = resp.text
     except Exception:
         return []
+    
     soup = BeautifulSoup(html, "html.parser")
     urls: list[str] = []
-    for meta in soup.select("meta[property='og:image'],meta[name='twitter:image']"):
+    
+    # 1. Try OpenGraph and Twitter images first (highest quality usually)
+    for meta in soup.select("meta[property='og:image'], meta[property='og:image:secure_url'], meta[name='twitter:image']"):
         u = normalize_url(meta.get("content"))
         if u:
             urls.append(u)
-    for img in soup.select("img"):
+    
+    # 2. Look for product screenshots specifically if on Product Hunt
+    if "producthunt.com" in url:
+        for img in soup.select("img[src*='ph-files.imgix.net'], img[src*='producthunt.com/posts/']"):
+            u = normalize_url(img.get("src") or img.get("data-src"))
+            if u:
+                urls.append(u)
+
+    # 3. Look for main project images/screenshots in the body
+    for img in soup.select("main img, article img, #content img, .content img"):
         src = img.get("src") or img.get("data-src")
         u = normalize_url(src)
         if not u:
             continue
+        
+        # Filter out common icons, avatars, and logos
         lu = u.lower()
-        if any(k in lu for k in ("logo", "avatar", "icon", "sprite")):
+        if any(k in lu for k in ("logo", "avatar", "icon", "sprite", "badge", "button", "loader")):
             continue
+        
+        # Try to avoid relative paths if they are too short or look like tiny assets
+        if len(u) < 20 and "/" not in u[10:]:
+            continue
+            
         urls.append(u)
-        if len(urls) >= 6:
+        if len(urls) >= 15:
             break
+            
     return list(dict.fromkeys(urls))
 
 

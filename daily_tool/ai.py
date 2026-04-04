@@ -15,6 +15,7 @@ from .config import (
     GEMINI_MODEL,
     OPENROUTER_BASE_URL,
     OPENROUTER_MODELS,
+    PRIMARY_MODEL_NAME,
 )
 from .utils import log
 
@@ -146,33 +147,32 @@ def generate_json_with_fallback(
     gemini_key: str | None,
     temperature: float = 0.7,
 ) -> dict[str, Any]:
-    """Generate JSON using OpenRouter first, fallback to Gemini."""
+    """Generate JSON using NASA-style priority: Primary -> OpenRouter Pool -> Gemini Fallback."""
     errors: list[str] = []
 
-    # Try OpenRouter first
+    # 1. Try OpenRouter prioritized models
     if openrouter_key:
-        models = OPENROUTER_MODELS.copy()
-        env_model = os.getenv("OPENROUTER_MODEL_NAME", "").strip()
-        if env_model:
-            models = [env_model] + [m for m in models if m != env_model]
-
-        for model in models:
+        # Build candidates: PRIMARY first, then the rest of the pool
+        candidates = [PRIMARY_MODEL_NAME] + [m for m in OPENROUTER_MODELS if m != PRIMARY_MODEL_NAME]
+        
+        for model in candidates:
             try:
-                log(f"Trying OpenRouter model: {model}")
+                log(f"Trying AI model (OpenRouter): {model}")
                 return call_openrouter(
                     session, openrouter_key, prompt, model, temperature=temperature
                 )
             except Exception as exc:
                 errors.append(f"OpenRouter {model}: {exc}")
+                log(f"warn: Model {model} failed, trying next...")
                 continue
 
-    # Fallback to Gemini
+    # 2. Hard fallback to Gemini if OpenRouter fails or is not configured
     if gemini_key:
         try:
-            log("Falling back to Gemini")
+            log(f"Falling back to native Gemini ({GEMINI_MODEL})")
             return call_gemini(session, gemini_key, prompt, temperature=temperature)
         except Exception as exc:
-            errors.append(f"Gemini: {exc}")
+            errors.append(f"Native Gemini: {exc}")
 
     raise RuntimeError("All AI models failed. " + " | ".join(errors[:5]))
 

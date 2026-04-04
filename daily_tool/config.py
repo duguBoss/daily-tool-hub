@@ -24,17 +24,20 @@ USER_AGENT = (
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
 )
 
-# Model configuration - OpenRouter prioritized
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+# Model policy requested by user (Sync with NASA):
+PRIMARY_MODEL_NAME = "google/gemini-2.0-flash-001"
+FALLBACK_MODEL_NAME = "google/gemini-2.0-flash-lite-001"
+
+# OpenRouter Pool
 OPENROUTER_MODELS = [
-    "nvidia/nemotron-3-super-120b-a12b:free",
-    "minimax/minimax-m2.5:free",
+    "deepseek/deepseek-chat",
+    "qwen/qwen-2.5-72b-instruct",
+    "minimax/minimax-6b",
     "stepfun/step-3.5-flash:free",
-    "nvidia/nemotron-3-nano-30b-a3b:free",
 ]
 
 # Gemini fallback
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 GEMINI_MAX_RETRIES = int(os.getenv("GEMINI_MAX_RETRIES", "5"))
 
 # Limits
