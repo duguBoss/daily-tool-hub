@@ -115,9 +115,9 @@ def ensure_wxhtml(
     tags = build_tags(post)
     tags_text = "".join([f"<span style='display:inline-block;margin:0 12px 0 0;color:#64748b;font-size:13px;white-space:nowrap;'>{escape(t)}</span>" for t in tags])
     
-    # Website link with clear separation
+    # Website link with clear separation (single line, no wrap)
     website_block = (
-        f"<p style='margin:0 0 18px 0;font-size:15px;color:#0f172a;'><strong style='color:#0369a1;'>🌍 直达官网：</strong><br/><a href='{escape(post.website)}' style='color:#0284c7;text-decoration:none;word-break:break-all;font-size:14px;'>{escape(post.website)}</a></p>"
+        f"<p style='margin:0 0 18px 0;font-size:15px;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'><strong style='color:#0369a1;'>🌍 直达官网：</strong><a href='{escape(post.website)}' style='color:#0284c7;text-decoration:none;font-size:14px;'>{escape(post.website)}</a></p>"
         if post.website
         else ""
     )

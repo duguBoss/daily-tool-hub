@@ -78,13 +78,17 @@ def tool_fingerprint(post: Any) -> str:
     return f"n:{normalized_name}"
 
 
-def clamp_summary(text: str, max_len: int = 30) -> str:
+def clamp_summary(text: str, max_len: int = 100) -> str:
     """Clamp summary text length."""
     s = re.sub(r"\s+", "", str(text or "")).strip()
-    s = re.sub(r"[。！？!?.]+$", "", s)
+    s = re.sub(r"[。！？!??.]+$", "", s)
     if not s:
         return "今日工具速览：值得试用的新工具"
-    return s[:max_len]
+    if len(s) <= max_len:
+        return s
+    # 截断到指定长度，并确保不以标点符号结尾
+    truncated = s[:max_len]
+    return truncated
 
 
 def make_click_title(text: str, post: Any) -> str:
