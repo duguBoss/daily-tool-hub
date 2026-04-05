@@ -3,8 +3,8 @@ name: Daily Tool Share
 on:
   workflow_dispatch:
   schedule:
-    # 05:00 Asia/Shanghai = 21:00 UTC (previous day)
-    - cron: "0 21 * * *"
+    # 06:25 Asia/Shanghai = 22:25 UTC (previous day)
+    - cron: "25 22 * * *"
 
 permissions:
   contents: write
